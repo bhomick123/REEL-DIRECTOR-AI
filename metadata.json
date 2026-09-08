@@ -1,0 +1,7 @@
+{
+  "name": "REEL DIRECTOR AI",
+  "description": "AI-powered fashion & Instagram Reel director. Analyzes visuals, hooks, audio, pacing, and account insights to select the winning Reel and generate high-converting captions, hashtags, and posting strategies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
