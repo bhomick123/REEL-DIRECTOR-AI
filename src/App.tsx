@@ -7,6 +7,7 @@ import { ContentPackView } from './components/ContentPackView';
 import { InstagramDashboard } from './components/InstagramDashboard';
 import { TrendRadarView } from './components/TrendRadarView';
 import { CreatorMemoryView } from './components/CreatorMemoryView';
+import { CreateMyNextReelView } from './components/CreateMyNextReelView';
 import { PrivacyModal } from './components/PrivacyModal';
 import { DiagnosticsModal } from './components/DiagnosticsModal';
 import { UserProfile, InstagramConnection, MultiReelComparison, ReelAnalysisResult } from './types';
@@ -15,7 +16,7 @@ import { extractExactFrameAtTimestamp } from './utils/videoProcessor';
 import { Sparkles, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'director' | 'instagram' | 'trends' | 'memory' | 'diagnostics'>('director');
+  const [currentTab, setCurrentTab] = useState<'director' | 'instagram' | 'create-reel' | 'trends' | 'memory' | 'diagnostics'>('director');
   
   // User & Instagram state
   const [user, setUser] = useState<UserProfile>({
@@ -35,10 +36,7 @@ export default function App() {
     mediaCount: 184,
     profilePictureUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
     permissionsGranted: [
-      'instagram_basic',
-      'instagram_manage_insights',
-      'pages_show_list',
-      'pages_read_engagement',
+      'instagram_business_basic',
     ],
   });
 
@@ -255,6 +253,15 @@ export default function App() {
             connection={instagram}
             onRefreshData={fetchInitialData}
             onOpenPrivacyModal={() => setPrivacyModalOpen(true)}
+            onNavigateToCreateReel={() => setCurrentTab('create-reel')}
+          />
+        )}
+
+        {/* TAB: CREATE MY NEXT REEL */}
+        {currentTab === 'create-reel' && (
+          <CreateMyNextReelView
+            connection={instagram}
+            onNavigateToInstagram={() => setCurrentTab('instagram')}
           />
         )}
 

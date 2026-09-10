@@ -25,6 +25,43 @@ export interface InstagramConnection {
   isMockDemo?: false;
 }
 
+export interface PerformanceMetricDetail {
+  value: number | null;
+  formatted: string;
+  isAvailable: boolean;
+  unavailableReason?: string;
+  label: string;
+  description: string;
+  calculationNote?: string;
+}
+
+export interface PerformancePatternItem {
+  title: string;
+  finding: string;
+  evidence: string;
+  takeaway: string;
+}
+
+export interface ContentStrategyRecommendation {
+  id: string;
+  priority: 'High' | 'Medium' | 'Test';
+  title: string;
+  category: 'Topic & Theme' | 'Hook & Structure' | 'Caption & Discussion' | 'Posting Schedule';
+  actionableStep: string;
+  whyBasedOnActualData: string; // Grounded in real performance numbers
+  supportingMetrics: string; // e.g. "Top Reel achieved 320 likes vs 140 average"
+  expectedImpact: string;
+}
+
+export interface NextReelRecommendation {
+  conceptTitle: string;
+  coreHook: string;
+  visualFormat: string;
+  captionPrompt: string;
+  suggestedPostingDayAndTime: string;
+  whyThisWillWork: string;
+}
+
 export interface InstagramMediaItem {
   id: string;
   caption?: string;
@@ -35,14 +72,65 @@ export interface InstagramMediaItem {
   thumbnailUrl?: string;
   likeCount?: number;
   commentsCount?: number;
-  viewsCount?: number;
-  reach?: number;
-  sharesCount?: number;
-  savedCount?: number;
+  viewsCount?: number | null; // null if unprovided by Graph API
+  reach?: number | null; // null if unprovided by Graph API
+  sharesCount?: number | null; // null if unprovided by Graph API
+  savedCount?: number | null; // null if unprovided by Graph API
+  engagementRate?: number;
+  isTopPerformer?: boolean;
+  isLowestPerformer?: boolean;
 }
 
 export interface InstagramPerformanceInsights {
   overallScore: number;
+  totalReelsAnalyzed: number;
+  totalFeedPostsAnalyzed?: number;
+  
+  // Available vs Unavailable Metric Summaries (never invented)
+  metrics: {
+    views: PerformanceMetricDetail;
+    reach: PerformanceMetricDetail;
+    likes: PerformanceMetricDetail;
+    comments: PerformanceMetricDetail;
+    shares: PerformanceMetricDetail;
+    saves: PerformanceMetricDetail;
+    engagementRate: PerformanceMetricDetail;
+  };
+
+  // Feature 1: Strongest and Weakest Patterns
+  strongestPatterns: PerformancePatternItem[];
+  weakestPatterns: PerformancePatternItem[];
+
+  // Top and Bottom Reels
+  bestPerformingReel?: {
+    id: string;
+    caption: string;
+    views: number | null;
+    reach: number | null;
+    likes: number;
+    comments: number;
+    permalink: string;
+    publishedDate: string;
+    whyItWon: string;
+  };
+  lowestPerformingReel?: {
+    id: string;
+    caption: string;
+    views: number | null;
+    reach: number | null;
+    likes: number;
+    comments: number;
+    permalink: string;
+    publishedDate: string;
+    bottleneck: string;
+  };
+
+  // Feature 2: Content Strategy Recommendations
+  nextReelRecommendation?: NextReelRecommendation;
+  strategyRecommendations: ContentStrategyRecommendation[];
+  contentThemesDetected: Array<{ theme: string; count: number; avgLikes: number }>;
+
+  // Existing compatibility fields
   averageReelViews: number;
   averageReach: number;
   engagementRate: number;
@@ -52,15 +140,65 @@ export interface InstagramPerformanceInsights {
   averageSaves: number;
   bestPerformingDay: string;
   bestPostingTimeWindow: string;
-  bestPerformingReel?: {
-    id: string;
-    caption: string;
-    views: number;
-    permalink: string;
-  };
   contentPatterns: string[];
   hasSufficientData: boolean;
   dataNotice?: string;
+}
+
+// FEATURE: CREATE MY NEXT REEL
+export interface NextReelHookOption {
+  hookNumber: 1 | 2 | 3;
+  hookText: string;
+  style: string;
+  deliveryNotes: string;
+  psychologicalTrigger: string;
+}
+
+export interface NextReelScriptScene {
+  sceneNumber: number;
+  timestamp: string;
+  shotType: string;
+  visualAction: string;
+  spokenAudioOrText: string;
+  onScreenText?: string;
+  directorNote: string;
+}
+
+export interface NextReelConceptResult {
+  hasSufficientData: boolean;
+  dataNotice?: string;
+  reelIdea: {
+    title: string;
+    concept: string;
+    targetDuration: string;
+    contentFormat: string;
+    bestPostingWindow: string;
+  };
+  hooks: NextReelHookOption[];
+  script: {
+    scenes: NextReelScriptScene[];
+    totalEstimatedDuration: string;
+    filmingChecklist: string[];
+    audioDirection: string;
+  };
+  caption: string;
+  cta: {
+    primaryText: string;
+    type: 'Comment-Driving' | 'Save-Oriented' | 'Share-Driven';
+    rationale: string;
+  };
+  hashtags: string[];
+  whyThisShouldWork: {
+    explanation: string;
+    dataGroundingEvidence: string;
+    connectedPatterns: string[];
+    metricsReferenced: {
+      accountMetric: string;
+      value: string;
+      influenceOnConcept: string;
+    }[];
+  };
+  generatedAt: string;
 }
 
 export interface VideoFrameSample {
@@ -212,6 +350,13 @@ export interface ReelAnalysisResult {
   coverRecommendation: CoverRecommendation;
   sceneCuts?: SceneCutEvent[];
   timelineEvents?: TimelineEvent[];
+  sampledFrameTimestamps?: string[];
+  sampledFrames?: Array<{
+    timestamp: number;
+    formattedTime: string;
+    label: string;
+    role?: string;
+  }>;
   improvementSteps: {
     stepNumber: number;
     description: string;

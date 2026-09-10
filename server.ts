@@ -1,12 +1,20 @@
+import dns from 'node:dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Graceful fallback for older runtimes
+}
+
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { store } from './server/store.js';
 import {
   analyzeReelWithGemini,
   getFashionTrendRadar,
   chatWithReelDirector,
+  generateCreateMyNextReelWithGemini,
 } from './server/geminiService.js';
 import {
   getMetaConfig,
@@ -24,8 +32,15 @@ import {
   DirectorChatRequest,
 } from './src/types.js';
 
-const __filename = typeof import.meta?.url === 'string' ? fileURLToPath(import.meta.url) : '';
-const __dirname = __filename ? path.dirname(__filename) : process.cwd();
+// Ensure standard published OAuth and app URLs are used
+if (!process.env.APP_URL || process.env.APP_URL.includes('ais-dev-') || process.env.APP_URL.includes('ais-pre-')) {
+  process.env.APP_URL = 'https://reel-director-ai.ai.studio';
+}
+if (!process.env.INSTAGRAM_REDIRECT_URI || process.env.INSTAGRAM_REDIRECT_URI.includes('ais-dev-') || process.env.INSTAGRAM_REDIRECT_URI.includes('ais-pre-')) {
+  process.env.INSTAGRAM_REDIRECT_URI = 'https://reel-director-ai.ai.studio/api/instagram/callback';
+}
+
+const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 async function startServer() {
   const app = express();
@@ -89,7 +104,7 @@ async function startServer() {
             notice: 'Meta App credentials are not yet set in environment secrets.',
             steps: [
               'Go to Meta for Developers (developers.facebook.com)',
-              'Create or open an app with "Instagram Graph API" product enabled',
+              'In your app, configure Instagram API -> API setup with Instagram login',
               'Copy App ID into INSTAGRAM_CLIENT_ID and App Secret into INSTAGRAM_CLIENT_SECRET',
               'Set Valid OAuth Redirect URIs to: ' + metaConfig.redirectUri,
             ],
@@ -139,8 +154,10 @@ async function startServer() {
       );
       const user = store.getUser('creator-primary');
       user.instagram = connection;
+      user.instagramAccessToken = tokens.accessToken;
       user.instagramMedia = media;
       user.insights = computeAccountPerformance(media, connection.followersCount);
+      store.saveInstagramSession('creator-primary');
 
       res.redirect('/?oauth_success=true');
     } catch (err: any) {
@@ -157,9 +174,41 @@ async function startServer() {
   app.post('/api/instagram/disconnect', (req, res) => {
     const user = store.getUser('creator-primary');
     user.instagram = { isConnected: false, permissionsGranted: [] };
+    user.instagramAccessToken = undefined;
     user.instagramMedia = [];
     user.insights = undefined;
+    store.saveInstagramSession('creator-primary');
     res.json({ success: true, message: 'Instagram disconnected successfully.' });
+  });
+
+  // Refresh Instagram data from live Meta Graph API
+  app.post('/api/instagram/refresh', async (req, res) => {
+    const user = store.getUser('creator-primary');
+    if (!user.instagram.isConnected || !user.instagramAccessToken) {
+      return res.status(400).json({
+        error: 'No active Instagram connection or token found to refresh.',
+      });
+    }
+
+    try {
+      const { connection, media } = await fetchInstagramProfileAndMedia(
+        user.instagramAccessToken
+      );
+      user.instagram = connection;
+      user.instagramMedia = media;
+      user.insights = computeAccountPerformance(media, connection.followersCount);
+      store.saveInstagramSession('creator-primary');
+
+      res.json({
+        success: true,
+        performance: user.insights,
+        mediaCount: user.instagramMedia.length,
+        recentMedia: user.instagramMedia,
+      });
+    } catch (err: any) {
+      console.error('Error refreshing Instagram media:', err);
+      res.status(500).json({ error: err.message || 'Failed to refresh Instagram data.' });
+    }
   });
 
   // Instagram Performance Engine
@@ -184,8 +233,69 @@ async function startServer() {
       isConnected: true,
       performance: user.insights,
       mediaCount: user.instagramMedia.length,
-      recentMedia: user.instagramMedia.slice(0, 6),
+      recentMedia: user.instagramMedia,
     });
+  });
+
+  // Feature: Create My Next Reel (AI-Generated from Real Instagram Data)
+  app.post('/api/instagram/create-next-reel', async (req, res) => {
+    try {
+      const user = store.getUser('creator-primary');
+      const { focusTopic } = req.body || {};
+
+      if (!user.insights) {
+        user.insights = computeAccountPerformance(
+          user.instagramMedia,
+          user.instagram.followersCount || 0
+        );
+      }
+
+      const concept = await generateCreateMyNextReelWithGemini({
+        user: user.profile,
+        instagram: user.instagram,
+        insights: user.insights,
+        media: user.instagramMedia,
+        userGoalOrTopic: focusTopic,
+      });
+
+      user.nextReelConcept = concept;
+      res.json({
+        success: true,
+        concept,
+      });
+    } catch (err: any) {
+      console.error('Error generating Next Reel concept:', err);
+      res.status(500).json({ error: err.message || 'Failed to generate Next Reel concept.' });
+    }
+  });
+
+  app.get('/api/instagram/create-next-reel', async (req, res) => {
+    try {
+      const user = store.getUser('creator-primary');
+      if (user.nextReelConcept) {
+        return res.json({ success: true, concept: user.nextReelConcept });
+      }
+
+      if (!user.insights) {
+        user.insights = computeAccountPerformance(
+          user.instagramMedia,
+          user.instagram.followersCount || 0
+        );
+      }
+
+      const concept = await generateCreateMyNextReelWithGemini({
+        user: user.profile,
+        instagram: user.instagram,
+        insights: user.insights,
+        media: user.instagramMedia,
+      });
+
+      user.nextReelConcept = concept;
+      res.json({ success: true, concept });
+    } catch (err: any) {
+      console.error('Error fetching Next Reel concept:', err);
+      res.status(500).json({ error: err.message || 'Failed to fetch Next Reel concept.' });
+    }
   });
 
   // Analyze single Reel Video
@@ -466,7 +576,12 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const candidatePaths = [
+      path.resolve(process.cwd(), 'dist'),
+      currentDir,
+      path.resolve(currentDir, 'dist'),
+    ];
+    const distPath = candidatePaths.find((p) => fs.existsSync(path.join(p, 'index.html'))) || candidatePaths[0];
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

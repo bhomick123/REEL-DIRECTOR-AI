@@ -3,8 +3,8 @@ import { Sparkles, Instagram, ShieldCheck, Activity, Brain, Radio, Sliders, Chec
 import { UserProfile, InstagramConnection } from '../types';
 
 interface HeaderProps {
-  currentTab: 'director' | 'instagram' | 'trends' | 'memory' | 'diagnostics';
-  setCurrentTab: (tab: 'director' | 'instagram' | 'trends' | 'memory' | 'diagnostics') => void;
+  currentTab: 'director' | 'instagram' | 'create-reel' | 'trends' | 'memory' | 'diagnostics';
+  setCurrentTab: (tab: 'director' | 'instagram' | 'create-reel' | 'trends' | 'memory' | 'diagnostics') => void;
   user: UserProfile;
   instagram: InstagramConnection;
   onOpenPrivacyModal: () => void;
@@ -71,6 +71,16 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               📊 Instagram Performance
+            </button>
+            <button
+              onClick={() => setCurrentTab('create-reel')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                currentTab === 'create-reel'
+                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-sm shadow-purple-500/40'
+                  : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              ✨ Create My Next Reel
             </button>
             <button
               onClick={() => setCurrentTab('trends')}
@@ -168,6 +178,16 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             📊 IG Performance
+          </button>
+          <button
+            onClick={() => setCurrentTab('create-reel')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+              currentTab === 'create-reel'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
+                : 'text-zinc-400 hover:text-white bg-white/[0.03]'
+            }`}
+          >
+            ✨ Create Next Reel
           </button>
           <button
             onClick={() => setCurrentTab('trends')}

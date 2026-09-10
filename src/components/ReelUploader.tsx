@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, Film, Play, Sparkles, Check, AlertCircle, X, ArrowRight, Loader2, Music, Clock } from 'lucide-react';
 import { FASHION_SHOOT_SAMPLES, SampleReelShoot } from '../data/sampleReels';
-import { extractVideoFramesAndMetadata } from '../utils/videoProcessor';
+import { extractVideoFramesAndMetadata, generateAdaptiveFramePlan } from '../utils/videoProcessor';
 import { ReelAnalysisResult, VideoFrameSample, AudioMetrics, SceneCutEvent, TimelineEvent } from '../types';
 
 export interface UploadedReelItem {
@@ -129,44 +129,46 @@ export const ReelUploader: React.FC<ReelUploaderProps> = ({
     }
   };
 
-  // Load sample demo fashion shoot takes
+  // Load sample demo fashion shoot takes with real duration-adaptive frame plan
   const loadDemoShoot = () => {
-    const demoItems: UploadedReelItem[] = FASHION_SHOOT_SAMPLES.map((sample, idx) => ({
-      id: sample.id,
-      reelNumber: idx + 1,
-      fileName: sample.fileName,
-      fileSizeMb: sample.fileSizeMb,
-      previewUrl: sample.videoUrl,
-      durationSeconds: sample.durationSeconds,
-      frames: [
-        {
-          timestamp: 0.0,
-          label: 'Opening Hook Frame',
-          dataUrl: sample.thumbnailUrl,
+    const demoItems: UploadedReelItem[] = FASHION_SHOOT_SAMPLES.map((sample, idx) => {
+      const plan = generateAdaptiveFramePlan(sample.durationSeconds);
+      const frames: VideoFrameSample[] = plan.map((p) => ({
+        timestamp: p.time,
+        formattedTime: p.formattedTime,
+        label: p.label,
+        role: p.role,
+        dataUrl: sample.thumbnailUrl,
+      }));
+      const timelineEvents: TimelineEvent[] = plan.map((p) => ({
+        timestamp: p.time,
+        formattedTime: p.formattedTime,
+        type: (p.role === 'opening' ? 'opening' : p.role === 'hook' ? 'hook' : p.role === 'loop_reset' ? 'loop_reset' : 'scene_change') as any,
+        visualObservation: `${p.label} at ${p.formattedTime}.`,
+      }));
+
+      return {
+        id: sample.id,
+        reelNumber: idx + 1,
+        fileName: sample.fileName,
+        fileSizeMb: sample.fileSizeMb,
+        previewUrl: sample.videoUrl,
+        durationSeconds: sample.durationSeconds,
+        frames,
+        audioMetrics: {
+          hasAudio: true,
+          isMusicDetected: true,
+          isSpeechDetected: false,
+          estimatedBpm: null,
+          transcript: null,
+          transcriptStatus: 'unavailable',
+          audioDirection: 'Minimal electronic luxury beat; tempo unmeasured in demo asset.',
         },
-        {
-          timestamp: 0.8,
-          label: 'Visual Contrast Frame',
-          dataUrl: sample.thumbnailUrl,
-        },
-        {
-          timestamp: 2.2,
-          label: 'Outfit Reveal',
-          dataUrl: sample.thumbnailUrl,
-        },
-      ],
-      audioMetrics: {
-        hasAudio: true,
-        isMusicDetected: true,
-        isSpeechDetected: false,
-        estimatedBpm: null,
-        transcript: null,
-        transcriptStatus: 'unavailable',
-        audioDirection: 'Minimal electronic luxury beat; tempo unmeasured in demo asset.',
-      },
-      status: 'ready',
-      progressStep: 'Ready for AI Director analysis',
-    }));
+        timelineEvents,
+        status: 'ready',
+        progressStep: 'Ready for AI Director analysis',
+      };
+    });
 
     setReelItems(demoItems);
   };
