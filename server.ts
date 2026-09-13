@@ -12,10 +12,12 @@ import { createServer as createViteServer } from 'vite';
 import { store } from './server/store.js';
 import {
   analyzeReelWithGemini,
+  analyzePhotoSetWithGemini,
   getFashionTrendRadar,
   chatWithReelDirector,
   generateCreateMyNextReelWithGemini,
 } from './server/geminiService.js';
+import { getUnifiedContentRecommendation } from './server/unifiedDirectorService.js';
 import {
   getMetaConfig,
   generateMetaOAuthUrl,
@@ -26,18 +28,23 @@ import {
   INSTAGRAM_PRIVACY_EXPLANATION,
 } from './server/instagramService.js';
 import {
+  getGoogleConfig,
+  generateGoogleOAuthUrl,
+  exchangeGoogleCodeForTokens,
+  fetchGoogleUserInfo,
+  parseGoogleIdTokenPayload,
+} from './server/googleAuthService.js';
+import {
   MultiReelComparison,
   ReelAnalysisResult,
   PredictionVsRealityItem,
   DirectorChatRequest,
+  UnifiedRecommendationRequest,
 } from './src/types.js';
 
-// Ensure standard published OAuth and app URLs are used
-if (!process.env.APP_URL || process.env.APP_URL.includes('ais-dev-') || process.env.APP_URL.includes('ais-pre-')) {
-  process.env.APP_URL = 'https://reel-director-ai.ai.studio';
-}
-if (!process.env.INSTAGRAM_REDIRECT_URI || process.env.INSTAGRAM_REDIRECT_URI.includes('ais-dev-') || process.env.INSTAGRAM_REDIRECT_URI.includes('ais-pre-')) {
-  process.env.INSTAGRAM_REDIRECT_URI = 'https://reel-director-ai.ai.studio/api/instagram/callback';
+// Fallback for local run if APP_URL is unset
+if (!process.env.APP_URL) {
+  process.env.APP_URL = 'http://localhost:3000';
 }
 
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
@@ -63,35 +70,244 @@ async function startServer() {
     });
   });
 
-  // User session and profile
-  const handleGetUserProfile = (req: express.Request, res: express.Response) => {
-    const user = store.getUser('creator-primary');
+  function getSessionUserId(req: express.Request): string {
+    // 1. Bearer Token
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      const sessionUser = store.validateSession(token);
+      if (sessionUser) return sessionUser;
+    }
+
+    // 2. x-session-token header
+    const sessionToken = req.headers['x-session-token'] as string;
+    if (sessionToken && typeof sessionToken === 'string') {
+      const sessionUser = store.validateSession(sessionToken.trim());
+      if (sessionUser) return sessionUser;
+    }
+
+    // 3. Cookie check
+    const cookieHeader = req.headers.cookie;
+    if (cookieHeader) {
+      const match = cookieHeader.match(/reel_director_session=([^;]+)/);
+      if (match && match[1]) {
+        const sessionUser = store.validateSession(match[1].trim());
+        if (sessionUser) return sessionUser;
+      }
+    }
+
+    // Security Hardening: Client-supplied x-user-id or query params are NEVER trusted as authentication.
+    // Identity must derive strictly from a validated cryptographic server-side session token.
+    return '';
+  }
+
+  // ==========================================
+  // GOOGLE AUTHENTICATION ROUTES
+  // ==========================================
+
+  // Google OAuth URL generation
+  app.get('/api/auth/google/url', (req, res) => {
+    try {
+      const config = getGoogleConfig(req);
+      const state = (req.query.state as string) || crypto.randomUUID();
+      const authUrl = config.isConfigured ? generateGoogleOAuthUrl(state, req) : '';
+      res.json({
+        isConfigured: config.isConfigured,
+        authUrl,
+        redirectUri: config.redirectUri,
+        clientId: config.clientId ? `${config.clientId.substring(0, 12)}...` : '',
+      });
+    } catch (err: any) {
+      console.error('Failed to get Google OAuth URL:', err);
+      res.status(500).json({ error: err.message || 'Failed to generate Google OAuth URL' });
+    }
+  });
+
+  // Google OAuth Callback (Official Redirect)
+  app.get('/api/auth/google/callback', async (req, res) => {
+    const code = req.query.code as string;
+    const state = req.query.state as string;
+    const error = req.query.error as string;
+
+    if (error || !code) {
+      return res.redirect(`/?auth_error=${encodeURIComponent(error || 'Google login was cancelled')}`);
+    }
+
+    try {
+      const config = getGoogleConfig(req);
+      const tokens = await exchangeGoogleCodeForTokens(code, config.redirectUri, req);
+      if (!tokens || !tokens.accessToken) {
+        throw new Error('Failed to retrieve token from Google');
+      }
+
+      const googleUser = await fetchGoogleUserInfo(tokens.accessToken);
+      const user = store.setGoogleUser({
+        googleId: googleUser.googleId,
+        email: googleUser.email,
+        name: googleUser.name,
+        avatarUrl: googleUser.avatarUrl,
+      });
+
+      const sessionToken = store.createSession(user.profile.id);
+
+      res.setHeader(
+        'Set-Cookie',
+        `reel_director_session=${sessionToken}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${30 * 86400}`
+      );
+
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head><title>Reel Director AI - Google Authentication</title></head>
+          <body style="background:#0a0a10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+            <div style="text-align:center;">
+              <h2 style="font-family:'Syne',sans-serif;margin-bottom:8px;">Authentication Successful</h2>
+              <p style="color:#a1a1aa;font-size:14px;">Welcome back, ${user.profile.name}! Returning to Reel Director AI...</p>
+            </div>
+            <script>
+              const payload = {
+                type: 'GOOGLE_AUTH_SUCCESS',
+                token: ${JSON.stringify(sessionToken)},
+                user: ${JSON.stringify(user.profile)},
+                instagram: ${JSON.stringify(user.instagram)}
+              };
+              try {
+                localStorage.setItem('reel_director_session_token', ${JSON.stringify(sessionToken)});
+                localStorage.setItem('reel_director_user', JSON.stringify(${JSON.stringify(user.profile)}));
+              } catch(e) {}
+              if (window.opener) {
+                window.opener.postMessage(payload, '*');
+                setTimeout(() => window.close(), 300);
+              } else {
+                window.location.href = '/?auth_success=true';
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    } catch (err: any) {
+      console.error('Google OAuth callback failure:', err);
+      res.redirect(`/?auth_error=${encodeURIComponent(err.message || 'Google authentication failed')}`);
+    }
+  });
+
+  // Verify Google Identity Services Credential (One-Tap / Sign in with Google Button)
+  app.post('/api/auth/google/verify-credential', (req, res) => {
+    try {
+      const { credential } = req.body;
+      if (!credential || typeof credential !== 'string') {
+        return res.status(400).json({ error: 'Missing credential parameter' });
+      }
+
+      const payload = parseGoogleIdTokenPayload(credential);
+      if (!payload || !payload.email) {
+        return res.status(400).json({ error: 'Could not decode Google ID token payload' });
+      }
+
+      const user = store.setGoogleUser({
+        googleId: payload.sub,
+        email: payload.email,
+        name: payload.name || payload.email.split('@')[0],
+        avatarUrl: payload.picture,
+      });
+
+      const sessionToken = store.createSession(user.profile.id);
+
+      res.setHeader(
+        'Set-Cookie',
+        `reel_director_session=${sessionToken}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${30 * 86400}`
+      );
+
+      res.json({
+        success: true,
+        token: sessionToken,
+        user: user.profile,
+        instagram: user.instagram,
+      });
+    } catch (err: any) {
+      console.error('Google credential verification error:', err);
+      res.status(500).json({ error: err.message || 'Google credential verification failed' });
+    }
+  });
+
+  // Session status
+  app.get(['/api/auth/session', '/api/auth/me'], (req, res) => {
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.json({ success: false, isAuthenticated: false, user: null, instagram: null });
+    }
+
+    const user = store.getUser(userId);
+    const analyses = user.analyses || [];
+    const comparisons = user.comparisons || [];
+    res.json({
+      success: true,
+      isAuthenticated: true,
+      user: user.profile,
+      instagram: user.instagram,
+      hasAnalyses: analyses.length > 0,
+      analysesCount: analyses.length,
+      comparisonsCount: comparisons.length,
+    });
+  });
+
+  // Logout Endpoint
+  app.post('/api/auth/logout', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      store.destroySession(authHeader.substring(7).trim());
+    }
+    const sessionToken = req.headers['x-session-token'] as string;
+    if (sessionToken) {
+      store.destroySession(sessionToken.trim());
+    }
+
+    res.setHeader('Set-Cookie', 'reel_director_session=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0');
+    res.json({ success: true, message: 'Logged out successfully.' });
+  });
+
+  // User profile (Protected)
+  app.get('/api/user/profile', (req, res) => {
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
+    const analyses = user.analyses || [];
+    const comparisons = user.comparisons || [];
     res.json({
       success: true,
       user: user.profile,
       instagram: user.instagram,
-      hasAnalyses: user.analyses.length > 0,
-      analysesCount: user.analyses.length,
-      comparisonsCount: user.comparisons.length,
+      hasAnalyses: analyses.length > 0,
+      analysesCount: analyses.length,
+      comparisonsCount: comparisons.length,
     });
-  };
-  app.get('/api/auth/session', handleGetUserProfile);
-  app.get('/api/user/profile', handleGetUserProfile);
+  });
 
   const handleUpdateUserProfile = (req: express.Request, res: express.Response) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     const { name, brandNiche } = req.body;
     if (name) user.profile.name = name;
     if (brandNiche) user.profile.brandNiche = brandNiche;
+    store.saveUserSession(userId);
     res.json({ success: true, profile: user.profile });
   };
   app.post('/api/auth/profile', handleUpdateUserProfile);
   app.post('/api/user/profile', handleUpdateUserProfile);
 
-  // Instagram Connection Status & Privacy
+  // Instagram Connection Status & Privacy (Protected)
   app.get('/api/instagram/status', (req, res) => {
     const metaConfig = getMetaConfig();
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
 
     res.json({
       isConfigured: metaConfig.isConfigured,
@@ -113,7 +329,7 @@ async function startServer() {
     });
   });
 
-  // Generate official Meta OAuth URL
+  // Generate official Meta OAuth URL (Protected - binds state to authenticated user)
   app.get('/api/instagram/auth-url', (req, res) => {
     const metaConfig = getMetaConfig();
     if (!metaConfig.isConfigured) {
@@ -125,22 +341,59 @@ async function startServer() {
       });
     }
 
-    const authUrl = generateMetaOAuthUrl();
-    res.json({ authUrl, redirectUri: metaConfig.redirectUri });
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required to connect Instagram.' });
+    }
+    const state = store.createOAuthState(userId);
+    const authUrl = generateMetaOAuthUrl(state);
+    res.json({
+      isConfigured: metaConfig.isConfigured,
+      authUrl,
+      redirectUri: metaConfig.redirectUri,
+    });
   });
 
-  // OAuth Callback
+  // OAuth Callback (Protected with cryptographic state validation)
   app.get('/api/instagram/callback', async (req, res) => {
     const code = req.query.code as string;
+    const state = req.query.state as string;
     const error = req.query.error as string;
     const errorReason = req.query.error_reason as string;
 
     if (error || !code) {
-      return res.redirect(
-        `/?oauth_error=${encodeURIComponent(
-          errorReason || error || 'Authorization was cancelled by user'
-        )}`
-      );
+      const errorMsg = errorReason || error || 'Authorization was cancelled by user';
+      return res.send(`
+        <!DOCTYPE html>
+        <html><body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'INSTAGRAM_OAUTH_ERROR', error: ${JSON.stringify(errorMsg)} }, '*');
+              window.close();
+            } else {
+              window.location.href = '/?oauth_error=${encodeURIComponent(errorMsg)}';
+            }
+          </script>
+        </body></html>
+      `);
+    }
+
+    const targetUserId = store.consumeOAuthState(state);
+    if (!targetUserId) {
+      const errorMsg = 'Invalid or expired OAuth state parameter (CSRF protection). Please try connecting again.';
+      return res.status(403).send(`
+        <!DOCTYPE html>
+        <html><body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'INSTAGRAM_OAUTH_ERROR', error: ${JSON.stringify(errorMsg)} }, '*');
+              window.close();
+            } else {
+              window.location.href = '/?oauth_error=${encodeURIComponent(errorMsg)}';
+            }
+          </script>
+        </body></html>
+      `);
     }
 
     try {
@@ -152,14 +405,38 @@ async function startServer() {
       const { connection, media } = await fetchInstagramProfileAndMedia(
         tokens.accessToken
       );
-      const user = store.getUser('creator-primary');
+      const user = store.getUser(targetUserId);
       user.instagram = connection;
       user.instagramAccessToken = tokens.accessToken;
       user.instagramMedia = media;
       user.insights = computeAccountPerformance(media, connection.followersCount);
-      store.saveInstagramSession('creator-primary');
+      store.saveInstagramSession(targetUserId);
 
-      res.redirect('/?oauth_success=true');
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head><title>Instagram Connected</title></head>
+          <body style="background:#0a0a10;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+            <div style="text-align:center;">
+              <h2 style="font-family:'Syne',sans-serif;margin-bottom:8px;">Instagram Connected!</h2>
+              <p style="color:#a1a1aa;font-size:14px;">@${connection.username} successfully linked to your account. Returning to Reel Director...</p>
+            </div>
+            <script>
+              const payload = {
+                type: 'INSTAGRAM_OAUTH_SUCCESS',
+                userId: ${JSON.stringify(targetUserId)},
+                connection: ${JSON.stringify(connection)}
+              };
+              if (window.opener) {
+                window.opener.postMessage(payload, '*');
+                setTimeout(() => window.close(), 300);
+              } else {
+                window.location.href = '/?oauth_success=true';
+              }
+            </script>
+          </body>
+        </html>
+      `);
     } catch (err: any) {
       console.error('Meta OAuth callback error:', err);
       res.redirect(
@@ -170,20 +447,23 @@ async function startServer() {
     }
   });
 
-  // Disconnect Instagram
+  // Disconnect Instagram (Protected)
   app.post('/api/instagram/disconnect', (req, res) => {
-    const user = store.getUser('creator-primary');
-    user.instagram = { isConnected: false, permissionsGranted: [] };
-    user.instagramAccessToken = undefined;
-    user.instagramMedia = [];
-    user.insights = undefined;
-    store.saveInstagramSession('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    store.disconnectInstagram(userId);
     res.json({ success: true, message: 'Instagram disconnected successfully.' });
   });
 
-  // Refresh Instagram data from live Meta Graph API
+  // Refresh Instagram data from live Meta Graph API (Protected)
   app.post('/api/instagram/refresh', async (req, res) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     if (!user.instagram.isConnected || !user.instagramAccessToken) {
       return res.status(400).json({
         error: 'No active Instagram connection or token found to refresh.',
@@ -197,7 +477,7 @@ async function startServer() {
       user.instagram = connection;
       user.instagramMedia = media;
       user.insights = computeAccountPerformance(media, connection.followersCount);
-      store.saveInstagramSession('creator-primary');
+      store.saveInstagramSession(userId);
 
       res.json({
         success: true,
@@ -211,9 +491,13 @@ async function startServer() {
     }
   });
 
-  // Instagram Performance Engine
+  // Instagram Performance Engine (Protected)
   app.get('/api/instagram/performance', (req, res) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     if (!user.instagram.isConnected) {
       return res.json({
         isConnected: false,
@@ -237,10 +521,14 @@ async function startServer() {
     });
   });
 
-  // Feature: Create My Next Reel (AI-Generated from Real Instagram Data)
+  // Feature: Create My Next Reel (AI-Generated from Real Instagram Data) (Protected)
   app.post('/api/instagram/create-next-reel', async (req, res) => {
     try {
-      const user = store.getUser('creator-primary');
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+      const user = store.getUser(userId);
       const { focusTopic } = req.body || {};
 
       if (!user.insights) {
@@ -271,7 +559,11 @@ async function startServer() {
 
   app.get('/api/instagram/create-next-reel', async (req, res) => {
     try {
-      const user = store.getUser('creator-primary');
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+      const user = store.getUser(userId);
       if (user.nextReelConcept) {
         return res.json({ success: true, concept: user.nextReelConcept });
       }
@@ -298,11 +590,17 @@ async function startServer() {
     }
   });
 
-  // Analyze single Reel Video
+  // Analyze single Reel Video (Protected)
   app.post('/api/reels/analyze', async (req, res) => {
     const startTime = Date.now();
     store.activeJobsCount++;
     try {
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        store.activeJobsCount--;
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+
       const {
         reelNumber,
         fileName,
@@ -319,7 +617,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Missing required video frames or metadata.' });
       }
 
-      const user = store.getUser('creator-primary');
+      const user = store.getUser(userId);
       const analysis = await analyzeReelWithGemini({
         reelNumber: Number(reelNumber) || 1,
         fileName: String(fileName),
@@ -340,7 +638,7 @@ async function startServer() {
         creatorContext: user.profile.brandNiche,
       });
 
-      store.saveAnalysis('creator-primary', analysis);
+      store.saveAnalysis(userId, analysis);
       store.totalJobsProcessed++;
       store.lastJobDurationMs = Date.now() - startTime;
       store.activeJobsCount--;
@@ -373,7 +671,11 @@ async function startServer() {
       const secondPlace = rankedReels[1];
 
       // Personalized Posting Recommendation Evaluation (No fake/default times)
-      const user = store.getUser('creator-primary');
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+      const user = store.getUser(userId);
       const isIgConnected = user?.instagram?.isConnected || false;
       const igMedia = user?.instagramMedia || [];
       const hasSufficientData = isIgConnected && igMedia.length >= 5;
@@ -385,10 +687,10 @@ async function startServer() {
 
       if (!isIgConnected) {
         postingWindowRationale =
-          'Instagram account not connected. Connect your Instagram Professional account to calculate your audience peak engagement window.';
+          'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
         postingDataNotice = 'Instagram account not connected';
       } else if (igMedia.length < 5) {
-        postingWindowRationale = `Not enough historical data yet (${igMedia.length}/5 Reels published). At least 5 published Reels are needed to determine statistically sound posting windows.`;
+        postingWindowRationale = `Not enough data yet (${igMedia.length}/5 Reels published). Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.`;
         postingDataNotice = 'Insufficient historical media (< 5 published Reels)';
       } else {
         // Calculate personalized peak day and window from top quartile media items
@@ -403,24 +705,36 @@ async function startServer() {
         const hourCounts: Record<number, number> = {};
 
         for (const item of topItems) {
+          if (!item.timestamp) continue;
           const d = new Date(item.timestamp);
+          if (isNaN(d.getTime())) continue;
           const day = days[d.getDay()];
           const hour = d.getHours();
           dayCounts[day] = (dayCounts[day] || 0) + 1;
           hourCounts[hour] = (hourCounts[hour] || 0) + 1;
         }
 
-        const bestDay = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Tuesday';
-        const bestHour = Number(Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 19);
-        const startPeriod = bestHour >= 12 ? 'PM' : 'AM';
-        const displayHour = bestHour % 12 === 0 ? 12 : bestHour % 12;
-        const endHour = (bestHour + 1) % 12 === 0 ? 12 : (bestHour + 1) % 12;
-        const endPeriod = bestHour + 1 >= 12 ? 'PM' : 'AM';
+        const topDayEntry = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
+        const topHourEntry = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
 
-        recommendedPostingDay = bestDay;
-        recommendedPostingTime = `${displayHour}:00 ${startPeriod} – ${endHour}:30 ${endPeriod}`;
-        postingWindowRationale = `Calculated from your top ${topCount} performing published Reels, where historical follower saves and interactions peaked on ${bestDay}s.`;
-        postingDataNotice = 'Personalized from connected account history';
+        if (!topDayEntry || !topHourEntry) {
+          recommendedPostingTime = 'Not enough data yet';
+          postingWindowRationale =
+            'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
+          postingDataNotice = 'Insufficient timestamp data';
+        } else {
+          const bestDay = topDayEntry[0];
+          const bestHour = Number(topHourEntry[0]);
+          const startPeriod = bestHour >= 12 ? 'PM' : 'AM';
+          const displayHour = bestHour % 12 === 0 ? 12 : bestHour % 12;
+          const endHour = (bestHour + 1) % 12 === 0 ? 12 : (bestHour + 1) % 12;
+          const endPeriod = bestHour + 1 >= 12 ? 'PM' : 'AM';
+
+          recommendedPostingDay = bestDay;
+          recommendedPostingTime = `${displayHour}:00 ${startPeriod} – ${endHour}:30 ${endPeriod}`;
+          postingWindowRationale = `Calculated from your top ${topCount} performing published Reels, where historical follower saves and interactions peaked on ${bestDay}s.`;
+          postingDataNotice = 'Personalized from connected account history';
+        }
       }
 
       const comparison: MultiReelComparison = {
@@ -450,11 +764,15 @@ async function startServer() {
         recommendedPostingDay,
         recommendedPostingTime,
         postingWindowRationale,
-        hasSufficientPostingData: hasSufficientData,
+        hasSufficientPostingData:
+          isIgConnected &&
+          igMedia.length >= 5 &&
+          Boolean(recommendedPostingDay) &&
+          recommendedPostingTime !== 'Not enough data yet',
         postingDataNotice,
       };
 
-      store.saveComparison('creator-primary', comparison);
+      store.saveComparison(userId, comparison);
       res.json({ success: true, comparison });
     } catch (err: any) {
       console.error('Comparison error:', err);
@@ -462,10 +780,235 @@ async function startServer() {
     }
   });
 
-  // Ask Your Reel Director Conversational Intelligence
+  // Analyze Photo Set (1–15 Photos)
+  app.post('/api/photos/analyze', async (req, res) => {
+    const startTime = Date.now();
+    store.activeJobsCount++;
+    try {
+      const { photos, userNiche } = req.body;
+
+      if (!photos || !Array.isArray(photos) || photos.length === 0) {
+        store.activeJobsCount--;
+        return res.status(400).json({ error: 'At least 1 photo is required.' });
+      }
+
+      if (photos.length > 15) {
+        store.activeJobsCount--;
+        return res.status(400).json({ error: 'Maximum 15 photos allowed per set.' });
+      }
+
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        store.activeJobsCount--;
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+      const user = store.getUser(userId);
+      const igMedia = user.instagramMedia || [];
+      const hasIg = user.instagram.isConnected;
+
+      // Extract verified posting recommendation based on Phase 1 real-data calculation
+      let recommendedPostingDay = 'Not enough data yet';
+      let recommendedPostingTime = 'Not enough data yet';
+      let postingWindowRationale = '';
+      let hasSufficientPostingData = false;
+      let postingDataNotice: string | undefined = undefined;
+
+      if (!hasIg) {
+        postingWindowRationale =
+          'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
+        postingDataNotice = 'Instagram not connected';
+      } else if (igMedia.length < 5) {
+        postingWindowRationale = `Not enough data yet (${igMedia.length}/5 media published). Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.`;
+        postingDataNotice = 'Insufficient historical media (< 5 published posts)';
+      } else {
+        const sortedByEngagement = [...igMedia].sort(
+          (a, b) => ((b.likeCount || 0) + (b.commentsCount || 0)) - ((a.likeCount || 0) + (a.commentsCount || 0))
+        );
+        const topCount = Math.max(1, Math.floor(sortedByEngagement.length / 2));
+        const topItems = sortedByEngagement.slice(0, topCount);
+
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayCounts: Record<string, number> = {};
+        const hourCounts: Record<number, number> = {};
+
+        for (const item of topItems) {
+          if (!item.timestamp) continue;
+          const d = new Date(item.timestamp);
+          if (isNaN(d.getTime())) continue;
+          const day = days[d.getDay()];
+          const hour = d.getHours();
+          dayCounts[day] = (dayCounts[day] || 0) + 1;
+          hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+        }
+
+        const topDayEntry = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
+        const topHourEntry = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+
+        if (!topDayEntry || !topHourEntry) {
+          recommendedPostingTime = 'Not enough data yet';
+          postingWindowRationale =
+            'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
+          postingDataNotice = 'Insufficient timestamp data';
+        } else {
+          const bestDay = topDayEntry[0];
+          const bestHour = Number(topHourEntry[0]);
+          const startPeriod = bestHour >= 12 ? 'PM' : 'AM';
+          const displayHour = bestHour % 12 === 0 ? 12 : bestHour % 12;
+          const endHour = (bestHour + 1) % 12 === 0 ? 12 : (bestHour + 1) % 12;
+          const endPeriod = bestHour + 1 >= 12 ? 'PM' : 'AM';
+
+          recommendedPostingDay = bestDay;
+          recommendedPostingTime = `${displayHour}:00 ${startPeriod} – ${endHour}:30 ${endPeriod}`;
+          postingWindowRationale = `Calculated from your top ${topCount} performing published posts, where historical follower interactions peaked on ${bestDay}s.`;
+          postingDataNotice = 'Personalized from connected account history';
+          hasSufficientPostingData = true;
+        }
+      }
+
+      const analysis = await analyzePhotoSetWithGemini({
+        photos,
+        userNiche: userNiche || user.profile.brandNiche,
+        postingContext: {
+          isIgConnected: hasIg,
+          mediaCount: igMedia.length,
+          recommendedPostingDay,
+          recommendedPostingTime,
+          postingWindowRationale,
+          hasSufficientPostingData,
+          postingDataNotice,
+        },
+      });
+
+      store.totalJobsProcessed++;
+      store.lastJobDurationMs = Date.now() - startTime;
+      store.activeJobsCount--;
+
+      res.json({ success: true, analysis });
+    } catch (err: any) {
+      store.activeJobsCount--;
+      console.error('Error analyzing Photo Set:', err);
+      res.status(500).json({ error: 'Failed to analyze Photo Set', message: err.message });
+    }
+  });
+
+  // Phase 3: Unified Content Director ("What should I post today?") (Protected)
+  app.post('/api/content/unified-recommendation', async (req, res) => {
+    try {
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+      const { comparison, photoSet, userPreference, userNiche } = req.body as UnifiedRecommendationRequest;
+      const user = store.getUser(userId);
+      const activeComp = comparison || user.comparisons[0] || undefined;
+      const niche = userNiche || user.profile.brandNiche;
+
+      // Extract verified posting recommendation based on Phase 1 real-data calculation
+      const igMedia = user.instagramMedia || [];
+      const hasIg = user.instagram.isConnected;
+      let recommendedPostingDay = 'Not enough data yet';
+      let recommendedPostingTime = 'Not enough data yet';
+      let postingWindowRationale = '';
+      let hasSufficientPostingData = false;
+      let postingDataNotice: string | undefined = undefined;
+
+      if (!hasIg) {
+        postingWindowRationale =
+          'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
+        postingDataNotice = 'Instagram not connected';
+      } else if (igMedia.length < 5) {
+        postingWindowRationale = `Not enough data yet (${igMedia.length}/5 media published). Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.`;
+        postingDataNotice = 'Insufficient historical media (< 5 published posts)';
+      } else {
+        const sortedByEngagement = [...igMedia].sort(
+          (a, b) => ((b.likeCount || 0) + (b.commentsCount || 0)) - ((a.likeCount || 0) + (a.commentsCount || 0))
+        );
+        const topCount = Math.max(1, Math.floor(sortedByEngagement.length / 2));
+        const topItems = sortedByEngagement.slice(0, topCount);
+
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayCounts: Record<string, number> = {};
+        const hourCounts: Record<number, number> = {};
+
+        for (const item of topItems) {
+          if (!item.timestamp) continue;
+          const d = new Date(item.timestamp);
+          if (isNaN(d.getTime())) continue;
+          const day = days[d.getDay()];
+          const hour = d.getHours();
+          dayCounts[day] = (dayCounts[day] || 0) + 1;
+          hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+        }
+
+        const topDayEntry = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
+        const topHourEntry = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+
+        if (!topDayEntry || !topHourEntry) {
+          recommendedPostingTime = 'Not enough data yet';
+          postingWindowRationale =
+            'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
+          postingDataNotice = 'Insufficient timestamp data';
+        } else {
+          const bestDay = topDayEntry[0];
+          const bestHour = Number(topHourEntry[0]);
+          const startPeriod = bestHour >= 12 ? 'PM' : 'AM';
+          const displayHour = bestHour % 12 === 0 ? 12 : bestHour % 12;
+          const endHour = (bestHour + 1) % 12 === 0 ? 12 : (bestHour + 1) % 12;
+          const endPeriod = bestHour + 1 >= 12 ? 'PM' : 'AM';
+
+          recommendedPostingDay = bestDay;
+          recommendedPostingTime = `${displayHour}:00 ${startPeriod} – ${endHour}:30 ${endPeriod}`;
+          postingWindowRationale = `Calculated from your top ${topCount} performing published posts, where historical follower interactions peaked on ${bestDay}s.`;
+          postingDataNotice = 'Personalized from connected account history';
+          hasSufficientPostingData = true;
+        }
+      }
+
+      const recommendation = await getUnifiedContentRecommendation({
+        comparison: activeComp,
+        photoSet,
+        userPreference,
+        userNiche: niche,
+        instagramContext: {
+          isConnected: hasIg,
+          mediaCount: igMedia.length,
+          recommendedPostingDay,
+          recommendedPostingTime,
+          postingWindowRationale,
+          hasSufficientPostingData,
+          postingDataNotice,
+        },
+      });
+
+      res.json({ success: true, recommendation });
+    } catch (err: any) {
+      console.error('Unified recommendation endpoint error:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to generate unified recommendation.',
+        message: err.message || 'An unexpected error occurred.',
+      });
+    }
+  });
+
+  // Ask Your Reel Director / Photo Director Conversational Intelligence (Protected)
   app.post('/api/director/chat', async (req, res) => {
     try {
-      const { message, currentReelId, activeComparison, history, userNiche } = req.body as DirectorChatRequest;
+      const userId = getSessionUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+      }
+
+      const {
+        message,
+        currentReelId,
+        activeComparison,
+        activePhotoSet,
+        currentPhotoNumber,
+        unifiedRecommendation,
+        history,
+        userNiche,
+      } = req.body as DirectorChatRequest;
 
       if (!message || typeof message !== 'string' || message.trim().length === 0) {
         return res.status(400).json({ error: 'A valid message string is required.' });
@@ -476,7 +1019,7 @@ async function startServer() {
       }
 
       // If activeComparison wasn't sent from client, fall back to stored comparison
-      const user = store.getUser('creator-primary');
+      const user = store.getUser(userId);
       const comparison = activeComparison || user.comparisons[0] || undefined;
       const niche = userNiche || user.profile.brandNiche;
 
@@ -484,6 +1027,9 @@ async function startServer() {
         message: message.trim(),
         currentReelId,
         activeComparison: comparison,
+        activePhotoSet,
+        currentPhotoNumber,
+        unifiedRecommendation,
         history: Array.isArray(history) ? history : [],
         userNiche: niche,
       });
@@ -499,7 +1045,7 @@ async function startServer() {
     }
   });
 
-  // Trend Radar
+  // Trend Radar (Public Fashion Trend Intelligence)
   app.get('/api/reels/trends', async (req, res) => {
     try {
       const trends = await getFashionTrendRadar();
@@ -514,9 +1060,13 @@ async function startServer() {
     }
   });
 
-  // Creator Memory
+  // Creator Memory (Protected)
   app.get('/api/creator/memory', (req, res) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     res.json({
       memory: user.creatorMemory,
       totalReelsAnalyzed: user.analyses.length,
@@ -524,9 +1074,13 @@ async function startServer() {
     });
   });
 
-  // Prediction vs Reality
+  // Prediction vs Reality (Protected)
   app.get('/api/creator/prediction-vs-reality', (req, res) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     res.json({
       predictions: user.predictions,
       totalTracked: user.predictions.length,
@@ -534,7 +1088,11 @@ async function startServer() {
   });
 
   app.post('/api/creator/prediction-vs-reality', (req, res) => {
-    const user = store.getUser('creator-primary');
+    const userId = getSessionUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required.' });
+    }
+    const user = store.getUser(userId);
     const { reelTitle, predictedScore, actualViews, actualReach, actualLikes, actualSaves, actualShares, takeaway } = req.body;
 
     const newItem: PredictionVsRealityItem = {
@@ -557,7 +1115,8 @@ async function startServer() {
 
   // Diagnostics (Admin / Developer)
   const handleGetDiagnostics = (req: express.Request, res: express.Response) => {
-    const diagnostics = store.getDiagnostics();
+    const userId = getSessionUserId(req);
+    const diagnostics = store.getDiagnostics(userId || undefined);
     res.json({
       diagnostics,
       timestamp: new Date().toISOString(),

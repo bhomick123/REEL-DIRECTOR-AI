@@ -15,21 +15,27 @@ import {
 import {
   MultiReelComparison,
   ReelAnalysisResult,
+  PhotoSetAnalysisResult,
   DirectorChatMessage,
   DirectorChatHistoryItem,
   DirectorChatResponse,
+  UnifiedContentRecommendation,
 } from '../types';
 
 interface AskDirectorChatProps {
   comparison?: MultiReelComparison | null;
   activeReel?: ReelAnalysisResult | null;
+  activePhotoSet?: PhotoSetAnalysisResult | null;
+  activePhotoNumber?: number | null;
+  unifiedRecommendation?: UnifiedContentRecommendation | null;
   userNiche?: string;
   onSeekToTimestamp?: (seconds: number) => void;
+  onSelectPhotoNumber?: (photoNumber: number) => void;
   className?: string;
   initialOpen?: boolean;
 }
 
-const STARTER_QUESTIONS = [
+const REEL_STARTER_QUESTIONS = [
   'Why did the winning Reel win?',
   'Which Reel has the strongest hook?',
   'What should I fix first?',
@@ -38,11 +44,33 @@ const STARTER_QUESTIONS = [
   'Should I trim any shots?',
 ];
 
+const PHOTO_STARTER_QUESTIONS = [
+  'Why did you put Photo 1 first?',
+  'Is Photo 3 good enough to post?',
+  'Simple Hinglish me samjhao',
+  'Which photo should I retake?',
+  'Caption less cringe karo',
+  'Can I post only a single photo?',
+];
+
+const UNIFIED_STARTER_QUESTIONS = [
+  'Why should I post the Reel?',
+  'Why not the carousel?',
+  'What if I want something more premium?',
+  'Hinglish me samjhao',
+  'I want a Reel today',
+  'What should I post today?',
+];
+
 export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
   comparison,
   activeReel,
+  activePhotoSet,
+  activePhotoNumber,
+  unifiedRecommendation,
   userNiche = 'High-Street Minimal & Luxury Fashion',
   onSeekToTimestamp,
+  onSelectPhotoNumber,
   className = '',
 }) => {
   const [messages, setMessages] = useState<DirectorChatMessage[]>([]);
@@ -50,7 +78,20 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorState, setErrorState] = useState<string | null>(null);
 
-  // Allow creator to switch focus among reels in the current comparison
+  const isPhotoMode = !!activePhotoSet;
+  const isUnifiedMode = !!unifiedRecommendation;
+  const starterQuestions = isUnifiedMode
+    ? UNIFIED_STARTER_QUESTIONS
+    : isPhotoMode
+    ? PHOTO_STARTER_QUESTIONS
+    : REEL_STARTER_QUESTIONS;
+
+  // Photo mode focus state
+  const availablePhotos = activePhotoSet?.photos || [];
+  const defaultPhotoNumber = activePhotoNumber || activePhotoSet?.strongestPhotoNumber || activePhotoSet?.photos[0]?.photoNumber || 1;
+  const [focusedPhotoNumber, setFocusedPhotoNumber] = useState<number>(defaultPhotoNumber);
+
+  // Reel mode focus state
   const availableReels = comparison?.reels || (activeReel ? [activeReel] : []);
   const defaultSelectedId = activeReel?.id || comparison?.reels.find((r) => r.isWinner)?.id || comparison?.reels[0]?.id;
   const [focusedReelId, setFocusedReelId] = useState<string | undefined>(defaultSelectedId);
@@ -58,7 +99,13 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Keep focusedReelId in sync if props change
+  // Keep focus in sync
+  useEffect(() => {
+    if (activePhotoNumber) {
+      setFocusedPhotoNumber(activePhotoNumber);
+    }
+  }, [activePhotoNumber]);
+
   useEffect(() => {
     if (activeReel?.id) {
       setFocusedReelId(activeReel.id);
@@ -73,6 +120,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
   }, [messages, isLoading]);
 
   const currentlyFocusedReel = availableReels.find((r) => r.id === focusedReelId) || availableReels[0];
+  const currentlyFocusedPhoto = availablePhotos.find((p) => p.photoNumber === focusedPhotoNumber) || availablePhotos[0];
 
   // Send message to /api/director/chat
   const handleSendMessage = async (textToSend?: string) => {
@@ -87,7 +135,8 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
       sender: 'user',
       text: query,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      relatedReelNumber: currentlyFocusedReel?.reelNumber,
+      relatedReelNumber: isPhotoMode ? undefined : currentlyFocusedReel?.reelNumber,
+      relatedPhotoNumber: isPhotoMode ? focusedPhotoNumber : undefined,
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -97,7 +146,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
     try {
       // Build conversation history for context continuity (last 8 messages)
       const historyPayload: DirectorChatHistoryItem[] = updatedMessages
-        .slice(-8, -1) // all except the current message which goes in `message`
+        .slice(-8, -1)
         .map((m) => ({
           role: m.sender === 'user' ? 'user' : 'model',
           text: m.text,
@@ -112,6 +161,9 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
           message: query,
           currentReelId: currentlyFocusedReel?.id,
           activeComparison: comparison || undefined,
+          activePhotoSet: activePhotoSet || undefined,
+          currentPhotoNumber: isPhotoMode ? focusedPhotoNumber : undefined,
+          unifiedRecommendation: unifiedRecommendation || undefined,
           history: historyPayload,
           userNiche,
         }),
@@ -129,13 +181,15 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
         sender: 'director',
         text: data.reply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        relatedReelNumber: currentlyFocusedReel?.reelNumber,
+        relatedReelNumber: isPhotoMode ? undefined : currentlyFocusedReel?.reelNumber,
+        relatedPhotoNumber: isPhotoMode ? focusedPhotoNumber : undefined,
+        referencedPhotos: data.referencedPhotos,
       };
 
       setMessages((prev) => [...prev, directorReply]);
     } catch (err: any) {
       console.error('AskDirectorChat error:', err);
-      setErrorState(err.message || 'Could not connect to Reel Director. Please retry.');
+      setErrorState(err.message || 'Could not connect to Director. Please retry.');
     } finally {
       setIsLoading(false);
     }
@@ -239,7 +293,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight font-['Syne']">
-                  Ask Your Reel Director
+                  {isPhotoMode ? 'Ask Your Photo Director' : 'Ask Your Reel Director'}
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -247,14 +301,59 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
                 </span>
               </div>
               <p className="text-xs text-zinc-400">
-                Your AI creative director knows your Reels, scores, edits and timeline.
+                {isPhotoMode
+                  ? 'Your AI creative director knows your photos, scores, carousel order, and retake advice.'
+                  : 'Your AI creative director knows your Reels, scores, edits and timeline.'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Reel Focus Selector Pills */}
-        {availableReels.length > 0 && (
+        {/* Focus Selector Pills */}
+        {isPhotoMode && availablePhotos.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-zinc-400 font-medium">Focus:</span>
+            {availablePhotos.map((photo) => {
+              const isSelected = photo.photoNumber === focusedPhotoNumber;
+              const statusColor =
+                photo.status === 'POST'
+                  ? 'bg-emerald-400/15 text-emerald-300 border-emerald-500/30'
+                  : photo.status === 'MAYBE'
+                  ? 'bg-amber-400/15 text-amber-300 border-amber-500/30'
+                  : 'bg-rose-400/15 text-rose-300 border-rose-500/30';
+
+              return (
+                <button
+                  key={photo.photoNumber}
+                  onClick={() => {
+                    setFocusedPhotoNumber(photo.photoNumber);
+                    onSelectPhotoNumber?.(photo.photoNumber);
+                  }}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition-all flex items-center space-x-1.5 ${
+                    isSelected
+                      ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400'
+                      : 'bg-white/[0.04] text-zinc-400 hover:text-white border border-white/[0.08] hover:bg-white/[0.08]'
+                  }`}
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>Photo #{photo.photoNumber}</span>
+                  <span className={`text-[9px] px-1 py-0.2 rounded border font-mono font-bold ${statusColor}`}>
+                    {photo.status}
+                  </span>
+                </button>
+              );
+            })}
+            {messages.length > 0 && (
+              <button
+                onClick={handleResetConversation}
+                title="Reset conversation"
+                className="p-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 border border-white/[0.08] ml-1 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        ) : availableReels.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-zinc-400 font-medium">Focus:</span>
             {availableReels.map((reel) => {
@@ -289,7 +388,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
               </button>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* 2. Messages & Empty State Container */}
@@ -297,15 +396,17 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
         {messages.length === 0 ? (
           <div className="py-6 sm:py-8 flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-4 animate-fadeIn">
             <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-              <Film className="w-6 h-6" />
+              {isPhotoMode ? <Layers className="w-6 h-6" /> : <Film className="w-6 h-6" />}
             </div>
 
             <div className="space-y-1.5">
               <h4 className="text-sm sm:text-base font-bold text-white font-['Syne']">
-                Direct Creative Advice on Your Uploaded Takes
+                {isPhotoMode ? 'Direct Editorial Advice on Your Photo Set' : 'Direct Creative Advice on Your Uploaded Takes'}
               </h4>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                The Director has evaluated {availableReels.length} Reel variation{availableReels.length === 1 ? '' : 's'} across 13 performance metrics. Ask why a specific variation won, query exact timestamps (e.g. "00:05 wala shot hata du?"), or challenge the scoring verdict.
+                {isPhotoMode
+                  ? `The Director has evaluated ${availablePhotos.length} photo${availablePhotos.length === 1 ? '' : 's'} across composition, lighting, sharpness, pose, and carousel sequence. Ask why a photo was ranked, request retake instructions, or query caption variants.`
+                  : `The Director has evaluated ${availableReels.length} Reel variation${availableReels.length === 1 ? '' : 's'} across 13 performance metrics. Ask why a specific variation won, query exact timestamps (e.g. "00:05 wala shot hata du?"), or challenge the scoring verdict.`}
               </p>
             </div>
 
@@ -315,7 +416,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
                 Quick Director Prompts
               </p>
               <div className="flex flex-wrap items-center justify-center gap-2">
-                {STARTER_QUESTIONS.map((q, idx) => (
+                {starterQuestions.map((q, idx) => (
                   <button
                     key={idx}
                     onClick={() => handleSendMessage(q)}
@@ -352,7 +453,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
                   >
                     <div className="flex items-center justify-between space-x-3 mb-1.5 pb-1 border-b border-white/[0.06]">
                       <span className="text-[10px] font-bold tracking-wider uppercase text-zinc-400">
-                        {isUser ? 'You' : 'Reel Director'}
+                        {isUser ? 'You' : isPhotoMode ? 'Photo Director' : 'Reel Director'}
                       </span>
                       <span className="text-[10px] text-zinc-400 font-mono">{msg.timestamp}</span>
                     </div>
@@ -362,7 +463,28 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
                         {msg.text}
                       </p>
                     ) : (
-                      renderFormattedText(msg.text)
+                      <div>
+                        {renderFormattedText(msg.text)}
+                        {msg.referencedPhotos && msg.referencedPhotos.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-white/[0.08] flex items-center space-x-2">
+                            <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                              Referenced:
+                            </span>
+                            {msg.referencedPhotos.map((pNum) => (
+                              <button
+                                key={pNum}
+                                onClick={() => {
+                                  setFocusedPhotoNumber(pNum);
+                                  onSelectPhotoNumber?.(pNum);
+                                }}
+                                className="px-2 py-0.5 rounded-md bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 border border-purple-500/30 text-[10px] font-mono font-bold"
+                              >
+                                Photo #{pNum}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -419,7 +541,7 @@ export const AskDirectorChat: React.FC<AskDirectorChatProps> = ({
       {messages.length > 0 && !isLoading && (
         <div className="px-4 sm:px-6 py-2 bg-[#0e0f17] border-t border-white/[0.04] flex items-center space-x-2 overflow-x-auto no-scrollbar text-xs">
           <span className="text-[10px] text-zinc-500 uppercase font-semibold shrink-0">Quick ask:</span>
-          {STARTER_QUESTIONS.slice(0, 4).map((q, idx) => (
+          {starterQuestions.slice(0, 4).map((q, idx) => (
             <button
               key={idx}
               onClick={() => handleSendMessage(q)}

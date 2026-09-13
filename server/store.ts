@@ -14,8 +14,11 @@ import {
 import { computeAccountPerformance } from './instagramService.js';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 const SESSION_FILE = path.join(process.cwd(), '.instagram_session.json');
+const USER_SESSIONS_FILE = path.join(process.cwd(), '.user_sessions.json');
+const AUTH_SESSIONS_FILE = path.join(process.cwd(), '.auth_sessions.json');
 
 interface UserData {
   profile: UserProfile;
@@ -32,6 +35,8 @@ interface UserData {
 
 class Store {
   private users: Map<string, UserData> = new Map();
+  private sessions: Map<string, { userId: string; createdAt: number }> = new Map();
+  private oauthStates: Map<string, { userId: string; createdAt: number }> = new Map();
   public startTime = Date.now();
   public totalJobsProcessed = 0;
   public activeJobsCount = 0;
@@ -169,7 +174,7 @@ class Store {
         optimalReelDurationRange: '7s – 11s',
         highestScoringFormats: ['Outfit Reveal with Fast Transition', 'Paced Texture Close-up to Full Body'],
         preferredHookStyles: ['Quiet Luxury Detail Opener', 'Direct Value Statement'],
-        bestPostingWindows: ['Tuesday: 6:30 PM – 8:30 PM'],
+        bestPostingWindows: initialInsights.bestPostingTimeWindow && initialInsights.bestPostingTimeWindow !== 'Not enough data yet' ? [initialInsights.bestPostingTimeWindow] : [],
         totalReelsAnalyzed: initialMedia.length,
         averageScoreAcrossUploads: initialInsights.overallScore,
         insightsSummary: 'Audience demonstrates highest retention when outfit details are framed in the first 1.2 seconds, paired with high-contrast styling and binary choice question prompts in captions.',
@@ -219,13 +224,143 @@ class Store {
           }
         }
       }
+
+      // Load all persisted user accounts (e.g. Google-authenticated creator accounts)
+      if (fs.existsSync(USER_SESSIONS_FILE)) {
+        const rawUsers = fs.readFileSync(USER_SESSIONS_FILE, 'utf-8');
+        const parsedUsers: Record<string, UserData> = JSON.parse(rawUsers);
+        for (const [uid, udata] of Object.entries(parsedUsers)) {
+          if (udata && udata.profile) {
+            if (udata.instagramMedia && udata.instagramMedia.length > 0 && !udata.insights) {
+              udata.insights = computeAccountPerformance(udata.instagramMedia, udata.instagram?.followersCount || 0);
+            }
+            this.users.set(uid, udata);
+          }
+        }
+      }
+      // Load auth sessions
+      if (fs.existsSync(AUTH_SESSIONS_FILE)) {
+        try {
+          const rawSessions = fs.readFileSync(AUTH_SESSIONS_FILE, 'utf-8');
+          const parsed = JSON.parse(rawSessions);
+          for (const [token, sData] of Object.entries(parsed as Record<string, { userId: string; createdAt: number }>)) {
+            if (sData && sData.userId) {
+              this.sessions.set(token, sData);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse auth sessions:', e);
+        }
+      }
     } catch (err) {
-      console.error('Error reading Instagram session file:', err);
+      console.error('Error reading session files:', err);
     }
   }
 
-  saveInstagramSession(userId = 'creator-primary') {
+  saveSessions() {
     try {
+      const obj: Record<string, { userId: string; createdAt: number }> = {};
+      for (const [token, data] of this.sessions.entries()) {
+        obj[token] = data;
+      }
+      fs.writeFileSync(AUTH_SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('Failed to persist auth sessions:', err);
+    }
+  }
+
+  createSession(userId: string): string {
+    const token = crypto.randomUUID();
+    this.sessions.set(token, {
+      userId,
+      createdAt: Date.now(),
+    });
+    this.saveSessions();
+    return token;
+  }
+
+  validateSession(token: string): string | null {
+    if (!token) return null;
+    const session = this.sessions.get(token);
+    if (!session) return null;
+
+    // 30 days validity
+    const maxAge = 30 * 24 * 60 * 60 * 1000;
+    if (Date.now() - session.createdAt > maxAge) {
+      this.sessions.delete(token);
+      this.saveSessions();
+      return null;
+    }
+
+    return session.userId;
+  }
+
+  destroySession(token: string): void {
+    if (token && this.sessions.has(token)) {
+      this.sessions.delete(token);
+      this.saveSessions();
+    }
+  }
+
+  saveUserSession(userId: string) {
+    try {
+      const user = this.getUser(userId);
+      let allUsers: Record<string, any> = {};
+      if (fs.existsSync(USER_SESSIONS_FILE)) {
+        try {
+          allUsers = JSON.parse(fs.readFileSync(USER_SESSIONS_FILE, 'utf-8'));
+        } catch {
+          allUsers = {};
+        }
+      }
+      allUsers[userId] = {
+        profile: user.profile,
+        instagram: user.instagram,
+        instagramAccessToken: user.instagramAccessToken,
+        instagramMedia: user.instagramMedia,
+        insights: user.insights,
+        creatorMemory: user.creatorMemory,
+      };
+      fs.writeFileSync(USER_SESSIONS_FILE, JSON.stringify(allUsers, null, 2), 'utf-8');
+    } catch (err) {
+      console.error(`Failed to persist user session for ${userId}:`, err);
+    }
+  }
+
+  createOAuthState(userId: string): string {
+    if (!userId) {
+      throw new Error('User ID is required to generate OAuth state');
+    }
+    const state = crypto.randomBytes(24).toString('hex');
+    this.oauthStates.set(state, { userId, createdAt: Date.now() });
+
+    // Evict expired state entries (> 10 minutes)
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    for (const [key, data] of this.oauthStates.entries()) {
+      if (data.createdAt < tenMinutesAgo) {
+        this.oauthStates.delete(key);
+      }
+    }
+    return state;
+  }
+
+  consumeOAuthState(state: string): string | null {
+    if (!state || typeof state !== 'string') return null;
+    const cleanState = state.trim();
+    const data = this.oauthStates.get(cleanState);
+    if (!data) return null;
+    this.oauthStates.delete(cleanState);
+
+    // Enforce 10-minute expiry window
+    if (Date.now() - data.createdAt > 10 * 60 * 1000) {
+      return null;
+    }
+    return data.userId;
+  }
+
+  saveInstagramSession(userId: string) {
+    try {
+      if (!userId) return;
       const user = this.getUser(userId);
       const sessionData = {
         instagram: user.instagram,
@@ -233,19 +368,88 @@ class Store {
         instagramMedia: user.instagramMedia,
       };
       fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionData, null, 2), 'utf-8');
+      this.saveUserSession(userId);
     } catch (err) {
       console.error('Failed to persist Instagram session:', err);
     }
   }
 
-  getUser(userId = 'creator-primary'): UserData {
-    let user = this.users.get(userId);
+  setGoogleUser(profileData: {
+    id?: string;
+    email: string;
+    name?: string;
+    avatarUrl?: string;
+    googleId?: string;
+  }): UserData {
+    const cleanEmail = profileData.email.trim().toLowerCase();
+    // Stable unique user ID by googleId or sanitized email
+    const userId = profileData.googleId
+      ? `google_${profileData.googleId}`
+      : `user_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+
+    const existing = this.users.get(userId);
+    const now = new Date().toISOString();
+    if (existing) {
+      existing.profile.name = profileData.name || existing.profile.name;
+      existing.profile.email = cleanEmail;
+      existing.profile.avatarUrl = profileData.avatarUrl || existing.profile.avatarUrl;
+      existing.profile.isGoogleAuthenticated = true;
+      existing.profile.googleId = profileData.googleId || existing.profile.googleId;
+      existing.profile.lastLoginAt = now;
+      this.saveUserSession(userId);
+      return existing;
+    }
+
+    // New Google user account - isolated with clean initial state
+    const newUser = this.getUser(userId);
+    newUser.profile = {
+      id: userId,
+      name: profileData.name || cleanEmail.split('@')[0],
+      email: cleanEmail,
+      brandNiche: 'Fashion, Lifestyle & Creative Direction',
+      createdAt: now,
+      lastLoginAt: now,
+      avatarUrl:
+        profileData.avatarUrl ||
+        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+          profileData.name || cleanEmail
+        )}`,
+      isGoogleAuthenticated: true,
+      googleId: profileData.googleId,
+    };
+
+    // Brand new user starts with no Instagram connection and no inherited demo data
+    newUser.instagram = { isConnected: false, permissionsGranted: [] };
+    newUser.instagramAccessToken = undefined;
+    newUser.instagramMedia = [];
+    newUser.insights = undefined;
+
+    this.saveUserSession(userId);
+    return newUser;
+  }
+
+  disconnectInstagram(userId: string): void {
+    if (!userId) return;
+    const user = this.getUser(userId);
+    user.instagram = { isConnected: false, permissionsGranted: [] };
+    user.instagramAccessToken = undefined;
+    user.instagramMedia = [];
+    user.insights = undefined;
+    this.saveInstagramSession(userId);
+  }
+
+  getUser(userId: string): UserData {
+    if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
+      throw new Error('A valid authenticated userId is required to access user data.');
+    }
+    const cleanId = userId.trim();
+    let user = this.users.get(cleanId);
     if (!user) {
       user = {
         profile: {
-          id: userId,
+          id: cleanId,
           name: 'Creator',
-          email: `${userId}@reeldirector.ai`,
+          email: `${cleanId}@reeldirector.ai`,
           brandNiche: 'Fashion & Aesthetic Content',
           createdAt: new Date().toISOString(),
         },
@@ -265,7 +469,7 @@ class Store {
         },
         predictions: [],
       };
-      this.users.set(userId, user);
+      this.users.set(cleanId, user);
     }
     return user;
   }
@@ -287,11 +491,11 @@ class Store {
     user.comparisons = [comparison, ...user.comparisons.filter(c => c.id !== comparison.id)];
   }
 
-  getDiagnostics(): DiagnosticsStatus {
+  getDiagnostics(userId?: string): DiagnosticsStatus {
     const isGeminiSet = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY';
     const isInstaClientIdSet = !!process.env.INSTAGRAM_CLIENT_ID;
     const isInstaSecretSet = !!process.env.INSTAGRAM_CLIENT_SECRET;
-    const user = this.getUser('creator-primary');
+    const activeUser = userId ? this.users.get(userId) : undefined;
 
     return {
       geminiApiConfigured: isGeminiSet,
@@ -299,7 +503,7 @@ class Store {
       instagramOAuthConfigured: isInstaClientIdSet && isInstaSecretSet,
       instagramClientIdPresent: isInstaClientIdSet,
       instagramClientSecretPresent: isInstaSecretSet,
-      instagramTokenConnected: user.instagram.isConnected,
+      instagramTokenConnected: !!activeUser?.instagram?.isConnected,
       serverPort: 3000,
       serverUptimeSeconds: Math.floor((Date.now() - this.startTime) / 1000),
       totalJobsProcessed: this.totalJobsProcessed,

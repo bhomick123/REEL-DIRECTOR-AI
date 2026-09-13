@@ -5,8 +5,13 @@ export interface UserProfile {
   name: string;
   email: string;
   brandNiche?: string;
-  createdAt: string;
+  preferredStyle?: string;
+  primaryGoal?: string;
+  createdAt?: string;
   avatarUrl?: string;
+  isGoogleAuthenticated?: boolean;
+  googleId?: string;
+  lastLoginAt?: string;
 }
 
 export interface InstagramConnection {
@@ -443,13 +448,15 @@ export interface DiagnosticsStatus {
   lastJobDurationMs?: number;
 }
 
-// Ask Your Reel Director Chat Types
+// Ask Your Reel Director / Photo Director Chat Types
 export interface DirectorChatMessage {
   id: string;
   sender: 'user' | 'director';
   text: string;
   timestamp: string;
   relatedReelNumber?: number;
+  relatedPhotoNumber?: number;
+  referencedPhotos?: number[];
 }
 
 export interface DirectorChatHistoryItem {
@@ -461,6 +468,9 @@ export interface DirectorChatRequest {
   message: string;
   currentReelId?: string;
   activeComparison?: MultiReelComparison;
+  activePhotoSet?: PhotoSetAnalysisResult;
+  currentPhotoNumber?: number;
+  unifiedRecommendation?: UnifiedContentRecommendation;
   history?: DirectorChatHistoryItem[];
   userNiche?: string;
 }
@@ -469,6 +479,137 @@ export interface DirectorChatResponse {
   success: boolean;
   reply: string;
   referencedReels?: number[];
+  referencedPhotos?: number[];
   referencedTimestamps?: string[];
 }
+
+// ========================================================
+// PHOTO DIRECTOR TYPES & INTERFACES
+// ========================================================
+
+export type PhotoVerdictStatus = 'POST' | 'MAYBE' | 'DONT_POST';
+
+export interface PhotoEvaluationFactors {
+  composition: string;
+  lighting: string;
+  exposure: string;
+  sharpness: string;
+  poseAndExpression: string;
+  outfitPresentation: string;
+  backgroundAndFraming: string;
+  distractions: string;
+}
+
+export interface IndividualPhotoAnalysis {
+  id: string;
+  photoNumber: number;
+  fileName: string;
+  previewUrl: string;
+  status: PhotoVerdictStatus;
+  score: number; // 0-100
+  verdictSummary: string;
+  evaluatedFactors: PhotoEvaluationFactors;
+  strengths: string[];
+  weaknesses: string[];
+  practicalImprovements: string[];
+  retakeRecommended: boolean;
+  retakeAdvice?: string;
+}
+
+export interface CarouselOrderRecommendation {
+  isRecommended: boolean;
+  recommendedOrder: number[]; // e.g. [3, 1, 4, 2] of Photo numbers
+  firstSlidePhotoNumber: number;
+  firstSlideRationale: string;
+  flowRationale: string;
+}
+
+export interface PhotoCaptions {
+  minimal: string;
+  stylish: string;
+  confident: string;
+  natural: string;
+  witty: string;
+}
+
+export interface PhotoSetAnalysisResult {
+  id: string;
+  createdAt: string;
+  totalPhotosAnalyzed: number;
+  photos: IndividualPhotoAnalysis[];
+  overallVerdict: string;
+  verdictType: 'CAROUSEL' | 'SINGLE_POST' | 'NO_POST';
+  recommendedPostPhotoNumbers: number[];
+  maybePostPhotoNumbers: number[];
+  dontPostPhotoNumbers: number[];
+  strongestPhotoNumber: number | null;
+  weakestPhotoNumber: number | null;
+  isVisuallyRepetitive: boolean;
+  repetitiveObservation?: string;
+  setObservations: string[];
+  carouselOrder?: CarouselOrderRecommendation;
+  singlePhotoRationale?: string;
+  noPostRationale?: string;
+  captions: PhotoCaptions;
+  hashtags: [string, string, string, string, string]; // Exactly 5 content-specific hashtags
+  // Verified posting-time integration from Phase 1
+  recommendedPostingDay?: string;
+  recommendedPostingTime: string;
+  postingWindowRationale: string;
+  hasSufficientPostingData?: boolean;
+  postingDataNotice?: string;
+}
+
+// ========================================================
+// PHASE 3: UNIFIED CONTENT DIRECTOR TYPES
+// ========================================================
+
+export type UnifiedRecommendationType =
+  | 'REEL'
+  | 'SINGLE_PHOTO'
+  | 'CAROUSEL'
+  | 'DONT_POST'
+  | 'NOT_ENOUGH_DATA';
+
+export type RecommendationConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export type UserPostingPreference = 'ALL' | 'REEL' | 'PHOTO' | 'CAROUSEL';
+
+export interface UnifiedContentRecommendation {
+  id: string;
+  createdAt: string;
+  recommendationType: UnifiedRecommendationType;
+  recommendedReelId?: string;
+  recommendedReelNumber?: number;
+  recommendedPhotoNumbers?: number[];
+  confidence: RecommendationConfidence;
+  headline: string; // e.g. "POST THE REEL", "POST THE CAROUSEL", "POST SINGLE PHOTO", "DON'T POST ANY OF THESE YET", "NOT ENOUGH DATA YET"
+  selectedTitle: string; // e.g. "Reel #2 — Paris Evening Look" or "Carousel (Photos #1, #3, #5)"
+  reasoning: string;
+  evidence: string[]; // 3-5 concise evidence points
+  strengths: string[];
+  risks: string[]; // specific weaknesses / "Watch out for"
+  alternativeOption?: string;
+  userPreferenceApplied?: 'REEL' | 'PHOTO' | 'CAROUSEL' | 'NONE';
+  contentAvailability: {
+    hasReels: boolean;
+    reelsCount: number;
+    hasPhotos: boolean;
+    photosCount: number;
+  };
+  postingDataState: 'SUFFICIENT' | 'INSUFFICIENT' | 'DISCONNECTED';
+  hasSufficientPostingData?: boolean;
+  recommendedPostingDay?: string;
+  recommendedPostingTime: string;
+  postingWindowRationale: string;
+  postingDataNotice?: string;
+}
+
+export interface UnifiedRecommendationRequest {
+  comparison?: MultiReelComparison;
+  photoSet?: PhotoSetAnalysisResult;
+  userPreference?: UserPostingPreference;
+  userNiche?: string;
+}
+
 

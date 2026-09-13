@@ -26,10 +26,16 @@ export const ContentPackView: React.FC<ContentPackViewProps> = ({
     time: false,
   });
 
-  const hasPostingData = comparison?.hasSufficientPostingData ?? false;
+  const hasPostingData = Boolean(
+    comparison?.hasSufficientPostingData &&
+    comparison?.recommendedPostingDay &&
+    comparison.recommendedPostingDay !== 'Not enough data yet' &&
+    comparison?.recommendedPostingTime &&
+    comparison.recommendedPostingTime !== 'Not enough data yet'
+  );
   const postingDay = comparison?.recommendedPostingDay;
   const postingTime = comparison?.recommendedPostingTime || 'Not enough data yet';
-  const postingRationale = comparison?.postingWindowRationale || 'Instagram account not connected or insufficient historical media. Connect your account to compute statistically sound posting windows.';
+  const postingRationale = comparison?.postingWindowRationale || 'Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.';
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -72,7 +78,7 @@ Timestamp: ${reel.coverRecommendation.formattedTime}
 Rationale: ${reel.coverRecommendation.rationale}
 
 8. POSTING SCHEDULE:
-${hasPostingData && postingDay ? `Recommended Day: ${postingDay}\nRecommended Window: ${postingTime}\nRationale: ${postingRationale}` : `Status: Not enough data yet\nNotice: Connect your Instagram Professional account with at least 5 published Reels to calculate personalized audience peak windows.`}
+${hasPostingData && postingDay ? `Recommended Day: ${postingDay}\nRecommended Window: ${postingTime}\nRationale: ${postingRationale}` : `Status: Not enough data yet\nNotice: Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window.`}
 `;
 
   return (
@@ -407,6 +413,11 @@ ${hasPostingData && postingDay ? `Recommended Day: ${postingDay}\nRecommended Wi
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   {postingRationale}
                 </p>
+                <div className="pt-2 border-t border-white/[0.04]">
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    <strong className="text-zinc-400 not-italic">General Industry Guidance (Not Personalized):</strong> While fashion content often sees broad engagement during evening leisure hours, your exact optimal posting window requires authentic historical account data.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -434,7 +445,13 @@ ${hasPostingData && postingDay ? `Recommended Day: ${postingDay}\nRecommended Wi
                 { id: 'cover', label: 'Cover frame selected at recommended timestamp' },
                 { id: 'caption', label: 'Caption selected and copied' },
                 { id: 'hashtags', label: 'Exactly 5 targeted hashtags added' },
-                { id: 'time', label: 'Scheduled for recommended 7:15–8:30 PM window' },
+                {
+                  id: 'time',
+                  label:
+                    hasPostingData && postingDay
+                      ? `Scheduled for calculated ${postingDay} (${postingTime}) window`
+                      : 'Scheduled during optimal audience activity window (pending account data)',
+                },
               ].map((item) => (
                 <label
                   key={item.id}

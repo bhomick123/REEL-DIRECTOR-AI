@@ -362,10 +362,20 @@ Data Evidence: ${concept.whyThisShouldWork.dataGroundingEvidence}`;
                 <Clock className="w-3.5 h-3.5" />
                 <span>Target Length: {concept.reelIdea.targetDuration}</span>
               </div>
-              <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-pink-500/10 text-pink-300 border border-pink-500/20">
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>Optimal Schedule: {concept.reelIdea.bestPostingWindow}</span>
-              </div>
+              {concept.reelIdea.bestPostingWindow && !concept.reelIdea.bestPostingWindow.includes('Not enough data yet') ? (
+                <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-pink-500/10 text-pink-300 border border-pink-500/20">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Optimal Schedule: {concept.reelIdea.bestPostingWindow}</span>
+                </div>
+              ) : (
+                <div
+                  className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                  title="Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window."
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Optimal Schedule: Not enough data yet</span>
+                </div>
+              )}
             </div>
           </div>
 

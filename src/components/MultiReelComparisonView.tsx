@@ -1,10 +1,11 @@
 import React from 'react';
 import { Trophy, Award, Sparkles, CheckCircle2, AlertTriangle, ArrowRight, Eye, Play, Flame, BarChart3, Clock } from 'lucide-react';
-import { MultiReelComparison, ReelAnalysisResult } from '../types';
+import { MultiReelComparison, ReelAnalysisResult, UnifiedContentRecommendation } from '../types';
 import { AskDirectorChat } from './AskDirectorChat';
 
 interface MultiReelComparisonViewProps {
   comparison: MultiReelComparison;
+  unifiedRecommendation?: UnifiedContentRecommendation | null;
   userNiche?: string;
   onSelectReelDetail: (reel: ReelAnalysisResult) => void;
   onViewContentPack: (winnerReel: ReelAnalysisResult) => void;
@@ -13,6 +14,7 @@ interface MultiReelComparisonViewProps {
 
 export const MultiReelComparisonView: React.FC<MultiReelComparisonViewProps> = ({
   comparison,
+  unifiedRecommendation,
   userNiche,
   onSelectReelDetail,
   onViewContentPack,
@@ -253,7 +255,11 @@ export const MultiReelComparisonView: React.FC<MultiReelComparisonViewProps> = (
       </div>
 
       {/* Ask Your Reel Director — Context-Aware Studio Chat */}
-      <AskDirectorChat comparison={comparison} userNiche={userNiche} />
+      <AskDirectorChat
+        comparison={comparison}
+        unifiedRecommendation={unifiedRecommendation}
+        userNiche={userNiche}
+      />
     </div>
   );
 };

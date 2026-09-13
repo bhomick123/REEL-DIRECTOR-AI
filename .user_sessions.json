@@ -1,0 +1,120 @@
+{
+  "google_google-sub-123456789": {
+    "profile": {
+      "id": "google_google-sub-123456789",
+      "name": "Bhomick Singh",
+      "email": "singhbhomick9@gmail.com",
+      "brandNiche": "Fashion, Lifestyle & Creative Direction",
+      "createdAt": "2026-09-13T09:08:09.355Z",
+      "lastLoginAt": "2026-09-13T09:08:24.253Z",
+      "avatarUrl": "https://lh3.googleusercontent.com/a/default-user=s96-c",
+      "isGoogleAuthenticated": true,
+      "googleId": "google-sub-123456789"
+    },
+    "instagram": {
+      "isConnected": false,
+      "permissionsGranted": []
+    },
+    "instagramMedia": [],
+    "creatorMemory": {
+      "preferredFashionStyles": [],
+      "optimalReelDurationRange": "8s – 12s",
+      "highestScoringFormats": [],
+      "preferredHookStyles": [],
+      "bestPostingWindows": [],
+      "totalReelsAnalyzed": 0,
+      "averageScoreAcrossUploads": 0,
+      "insightsSummary": "Collect more Reels to identify creator-specific performance patterns."
+    }
+  },
+  "user_singhbhomick9_gmail_com": {
+    "profile": {
+      "id": "user_singhbhomick9_gmail_com",
+      "name": "Bhomick Singh",
+      "email": "singhbhomick9@gmail.com",
+      "brandNiche": "Fashion, Lifestyle & Creative Direction",
+      "createdAt": "2026-09-13T09:08:27.772Z",
+      "lastLoginAt": "2026-09-13T09:10:05.138Z",
+      "avatarUrl": "https://api.dicebear.com/7.x/initials/svg?seed=Bhomick%20Singh",
+      "isGoogleAuthenticated": true
+    },
+    "instagram": {
+      "isConnected": true,
+      "username": "singhbhomick_creator",
+      "accountType": "CREATOR",
+      "followersCount": 52400,
+      "mediaCount": 0,
+      "profilePictureUrl": "https://api.dicebear.com/7.x/initials/svg?seed=Bhomick%20Singh",
+      "connectedAt": "2026-09-13T09:10:05.120Z",
+      "permissionsGranted": [
+        "instagram_business_basic",
+        "instagram_manage_insights"
+      ]
+    },
+    "instagramMedia": [],
+    "creatorMemory": {
+      "preferredFashionStyles": [],
+      "optimalReelDurationRange": "8s – 12s",
+      "highestScoringFormats": [],
+      "preferredHookStyles": [],
+      "bestPostingWindows": [],
+      "totalReelsAnalyzed": 0,
+      "averageScoreAcrossUploads": 0,
+      "insightsSummary": "Collect more Reels to identify creator-specific performance patterns."
+    }
+  },
+  "user_test_gmail_com": {
+    "profile": {
+      "id": "user_test_gmail_com",
+      "name": "test",
+      "email": "test@gmail.com",
+      "brandNiche": "Fashion, Lifestyle & Creative Direction",
+      "createdAt": "2026-09-13T09:09:19.785Z",
+      "lastLoginAt": "2026-09-13T09:09:19.785Z",
+      "avatarUrl": "https://api.dicebear.com/7.x/initials/svg?seed=test%40gmail.com",
+      "isGoogleAuthenticated": true
+    },
+    "instagram": {
+      "isConnected": false,
+      "permissionsGranted": []
+    },
+    "instagramMedia": [],
+    "creatorMemory": {
+      "preferredFashionStyles": [],
+      "optimalReelDurationRange": "8s – 12s",
+      "highestScoringFormats": [],
+      "preferredHookStyles": [],
+      "bestPostingWindows": [],
+      "totalReelsAnalyzed": 0,
+      "averageScoreAcrossUploads": 0,
+      "insightsSummary": "Collect more Reels to identify creator-specific performance patterns."
+    }
+  },
+  "user_creator2_isolated_gmail_com": {
+    "profile": {
+      "id": "user_creator2_isolated_gmail_com",
+      "name": "Different Creator",
+      "email": "creator2_isolated@gmail.com",
+      "brandNiche": "Fashion, Lifestyle & Creative Direction",
+      "createdAt": "2026-09-13T09:10:05.126Z",
+      "lastLoginAt": "2026-09-13T09:10:05.126Z",
+      "avatarUrl": "https://api.dicebear.com/7.x/initials/svg?seed=Different%20Creator",
+      "isGoogleAuthenticated": true
+    },
+    "instagram": {
+      "isConnected": false,
+      "permissionsGranted": []
+    },
+    "instagramMedia": [],
+    "creatorMemory": {
+      "preferredFashionStyles": [],
+      "optimalReelDurationRange": "8s – 12s",
+      "highestScoringFormats": [],
+      "preferredHookStyles": [],
+      "bestPostingWindows": [],
+      "totalReelsAnalyzed": 0,
+      "averageScoreAcrossUploads": 0,
+      "insightsSummary": "Collect more Reels to identify creator-specific performance patterns."
+    }
+  }
+}

@@ -459,8 +459,8 @@ export function computeAccountPerformance(
     count: data.count,
   })).sort((a, b) => b.avgEng - a.avgEng);
 
-  const bestDay = sortedDays[0]?.day || 'Tuesday';
-  const worstDay = sortedDays.length > 1 ? sortedDays[sortedDays.length - 1].day : 'Sunday';
+  const bestDay = sortedDays[0]?.day;
+  const worstDay = sortedDays.length > 1 ? sortedDays[sortedDays.length - 1].day : undefined;
   const bestDayAvg = sortedDays[0]?.avgEng || avgLikes;
   const worstDayAvg = sortedDays.length > 1 ? sortedDays[sortedDays.length - 1].avgEng : Math.round(avgLikes * 0.7);
 
@@ -473,7 +473,7 @@ export function computeAccountPerformance(
     }))
     .sort((a, b) => b.avgEng - a.avgEng);
 
-  const bestWindow = sortedHours[0]?.window || 'Evening (6:30 PM – 8:30 PM)';
+  const bestWindow = sortedHours[0]?.window;
 
   // 5. Content Theme & Caption Analysis
   const themesMap: Record<string, { count: number; totalLikes: number }> = {};
@@ -541,12 +541,14 @@ export function computeAccountPerformance(
   }
 
   // Pattern 2: Peak Schedule Timing
-  strongestPatterns.push({
-    title: `Peak Algorithmic Window: ${bestDay}s`,
-    finding: `Publishing on ${bestDay}s produces significantly higher initial organic reach and interaction.`,
-    evidence: `${bestDay} posts generated an average of ${bestDayAvg} total interactions, outperforming ${worstDay} posts (${worstDayAvg} interactions) by ${worstDayAvg > 0 ? Math.round(((bestDayAvg - worstDayAvg) / worstDayAvg) * 100) : 25}%.`,
-    takeaway: `Prioritize your most polished creative pieces for release on ${bestDay} during ${bestWindow}.`,
-  });
+  if (bestDay && bestWindow) {
+    strongestPatterns.push({
+      title: `Peak Algorithmic Window: ${bestDay}s`,
+      finding: `Publishing on ${bestDay}s produces significantly higher initial organic reach and interaction.`,
+      evidence: `${bestDay} posts generated an average of ${bestDayAvg} total interactions${worstDay ? `, outperforming ${worstDay} posts (${worstDayAvg} interactions) by ${worstDayAvg > 0 ? Math.round(((bestDayAvg - worstDayAvg) / worstDayAvg) * 100) : 25}%` : ''}.`,
+      takeaway: `Prioritize your most polished creative pieces for release on ${bestDay} during ${bestWindow}.`,
+    });
+  }
 
   // Pattern 3: Question Hooks in Captions
   if (postsWithQuestions.length > 0 && avgCommentsWithQ > avgCommentsWithoutQ) {
@@ -614,16 +616,18 @@ export function computeAccountPerformance(
   });
 
   // Recommendation 2: Algorithmic Timing Alignment
-  strategyRecommendations.push({
-    id: 'strat-rec-2',
-    priority: 'High',
-    category: 'Posting Schedule',
-    title: `Schedule Flagship Reels for ${bestDay}s`,
-    actionableStep: `Align your production schedule to drop your primary Reel every ${bestDay} during ${bestWindow}.`,
-    whyBasedOnActualData: `Your real Instagram data shows ${bestDay} posts generate an average of ${bestDayAvg} interactions, compared to only ${worstDayAvg} on ${worstDay}s (+${worstDayAvg > 0 ? Math.round(((bestDayAvg - worstDayAvg) / worstDayAvg) * 100) : 25}% lift).`,
-    supportingMetrics: `${bestDay} average: ${bestDayAvg} interactions vs ${worstDay}: ${worstDayAvg}.`,
-    expectedImpact: 'Maximizes initial 60-minute view velocity, crucial for Instagram Reels explore algorithm placement.',
-  });
+  if (bestDay && bestWindow) {
+    strategyRecommendations.push({
+      id: 'strat-rec-2',
+      priority: 'High',
+      category: 'Posting Schedule',
+      title: `Schedule Flagship Reels for ${bestDay}s`,
+      actionableStep: `Align your production schedule to drop your primary Reel every ${bestDay} during ${bestWindow}.`,
+      whyBasedOnActualData: `Your real Instagram data shows ${bestDay} posts generate an average of ${bestDayAvg} interactions${worstDay ? `, compared to only ${worstDayAvg} on ${worstDay}s (+${worstDayAvg > 0 ? Math.round(((bestDayAvg - worstDayAvg) / worstDayAvg) * 100) : 25}% lift)` : ''}.`,
+      supportingMetrics: `${bestDay} average: ${bestDayAvg} interactions${worstDay ? ` vs ${worstDay}: ${worstDayAvg}` : ''}.`,
+      expectedImpact: 'Maximizes initial 60-minute view velocity, crucial for Instagram Reels explore algorithm placement.',
+    });
+  }
 
   // Recommendation 3: Discussion Hooks
   strategyRecommendations.push({
@@ -667,10 +671,12 @@ export function computeAccountPerformance(
     coreHook: '0.0s – 1.0s: Immediate visual contrast cut with bold on-screen title: "Stop styling this piece like everyone else."',
     visualFormat: 'Vertical 9:16, 9–11 seconds total duration. Fast 1.2s cuts between 3 distinct silhouettes with matching neutral palette.',
     captionPrompt: `Drop a direct question in the caption: "Which silhouette are you wearing this week? 1, 2, or 3? Styling breakdown in comments below."`,
-    suggestedPostingDayAndTime: `${bestDay} between ${bestWindow}`,
+    suggestedPostingDayAndTime: (bestDay && bestWindow)
+      ? `${bestDay} between ${bestWindow}`
+      : 'Not enough data yet (Connect your Instagram Professional account and provide sufficient historical data to calculate a personalized posting window)',
     whyThisWillWork: topReel
-      ? `Capitalizes on the winning signals of your top post ("${(topReel.caption || 'Top Reel').slice(0, 45)}..."), which drove ${topReelLikes} likes (+${topReelLift}% above average) and your peak day velocity on ${bestDay}s.`
-      : `Designed around your highest-converting topic (${topTheme}) and your peak audience activity window on ${bestDay}s.`,
+      ? `Capitalizes on the winning signals of your top post ("${(topReel.caption || 'Top Reel').slice(0, 45)}..."), which drove ${topReelLikes} likes (+${topReelLift}% above average)${bestDay ? ` and your peak day velocity on ${bestDay}s` : ''}.`
+      : `Designed around your highest-converting topic (${topTheme})${bestDay ? ` and your peak audience activity window on ${bestDay}s` : ''}.`,
   };
 
   const topReelData = topReel
@@ -728,8 +734,8 @@ export function computeAccountPerformance(
     averageComments: avgComments,
     averageShares: avgShares || 0,
     averageSaves: avgSaves || 0,
-    bestPerformingDay: bestDay,
-    bestPostingTimeWindow: `${bestDay}: ${bestWindow}`,
+    bestPerformingDay: bestDay || 'Not enough data yet',
+    bestPostingTimeWindow: (bestDay && bestWindow) ? `${bestDay}: ${bestWindow}` : 'Not enough data yet',
     contentPatterns: strongestPatterns.map((p) => `${p.title}: ${p.finding}`),
     hasSufficientData: totalAnalyzed >= 1,
     dataNotice:

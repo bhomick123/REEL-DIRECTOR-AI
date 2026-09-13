@@ -1,0 +1,16 @@
+{
+  "instagram": {
+    "isConnected": true,
+    "username": "singhbhomick_creator",
+    "accountType": "CREATOR",
+    "followersCount": 52400,
+    "mediaCount": 0,
+    "profilePictureUrl": "https://api.dicebear.com/7.x/initials/svg?seed=Bhomick%20Singh",
+    "connectedAt": "2026-09-13T09:10:05.120Z",
+    "permissionsGranted": [
+      "instagram_business_basic",
+      "instagram_manage_insights"
+    ]
+  },
+  "instagramMedia": []
+}
